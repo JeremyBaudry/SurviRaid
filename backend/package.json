@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Backend API pour SurviRaid - Planificateur de raids WoW Classic ERA",
   "main": "server.js",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js"

@@ -3,15 +3,13 @@ services:
     name: surviraid
     runtime: node
     plan: free
-    buildCommand: >
-      cd frontend && npm install &&
-      VITE_API_URL=/api npm run build &&
-      mkdir -p ../backend/public && cp -r dist/* ../backend/public/ &&
-      cd ../backend && npm install
+    buildCommand: chmod +x ./render-build.sh && ./render-build.sh
     startCommand: cd backend && node server.js
     envVars:
       - key: NODE_ENV
         value: production
+      - key: NODE_VERSION
+        value: "22"
       - key: JWT_SECRET
         generateValue: true
       - key: DB_PATH
