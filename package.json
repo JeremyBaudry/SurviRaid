@@ -1,0 +1,12 @@
+{
+  "name": "surviraid",
+  "private": true,
+  "version": "1.0.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "npm install --prefix frontend && npm run build --prefix frontend && node scripts/copy-frontend.js && npm install --prefix backend",
+    "start": "npm start --prefix backend"
+  }
+}

@@ -3,8 +3,8 @@ services:
     name: surviraid
     runtime: node
     plan: free
-    buildCommand: cd frontend && npm install && npm run build && mkdir -p ../backend/public && cp -r dist/* ../backend/public/ && cd ../backend && npm install
-    startCommand: cd backend && node server.js
+    buildCommand: npm run build
+    startCommand: npm start
     envVars:
       - key: NODE_ENV
         value: production
@@ -15,4 +15,4 @@ services:
       - key: JWT_SECRET
         generateValue: true
       - key: DB_PATH
-        value: ./surviraid.db
+        value: ./backend/surviraid.db
