@@ -1,0 +1,16 @@
+node_modules/
+dist/
+dist-ssr/
+backend/public/
+*.db
+*.db-journal
+.env
+.env.*
+!.env.example
+logs/
+*.log
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.local
