@@ -24,7 +24,6 @@ const ROLES_BY_CLASS = {
 
 export default function Characters() {
   const [chars, setChars] = useState([]);
-  const [classesData, setClassesData] = useState({ classes: [], roles: [] });
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({ nom: '', classe: '', role: 'DPS', role2: '', type: 'Main', acces: {} });
   const [error, setError] = useState('');
@@ -32,10 +31,11 @@ export default function Characters() {
   const [freqSaving, setFreqSaving] = useState(false);
   const [freqMsg, setFreqMsg] = useState('');
 
+  const classList = Object.keys(ROLES_BY_CLASS);
+
   useEffect(() => {
     load();
-    api.getClasses().then(setClassesData);
-    api.me().then(u => setFreq(u.raids_par_semaine_max));
+    api.me().then(u => setFreq(u.raids_par_semaine_max)).catch(() => {});
   }, []);
 
   async function load() {
@@ -135,7 +135,7 @@ export default function Characters() {
                 setForm({ ...form, classe: newClasse, role: newRole, role2: newRole2 });
               }} required>
                   <option value="">-- Choisir --</option>
-                  {classesData.classes?.map(c => <option key={c} value={c}>{c}</option>)}
+                  {classList.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
               <div className="form-group">
