@@ -19,7 +19,6 @@ const ROLES_BY_CLASS = {
 const ACCESS_INSTANCES = ['MC', 'BWL', 'ONY', 'Naxx'];
 const RAID40 = ['Naxx', 'AQ40'];
 
-// Soirs « gros raid » ciblés
 const RAID_NIGHTS = [
   { instance: 'Naxx', jour: 'Mardi', target: 42 },
   { instance: 'AQ40', jour: 'Samedi', target: 43 },
@@ -38,33 +37,33 @@ function uniqueName(used, prefix) {
   return nom;
 }
 
-function createAccount(pseudo, password) {
+async function createAccount(pseudo, password) {
   const hash = bcrypt.hashSync(password, 10);
-  const result = run('INSERT INTO joueur (pseudo, password_hash, role) VALUES (?, ?, ?)', [pseudo, hash, 'membre']);
-  run('INSERT OR IGNORE INTO frequence (joueur_id, raids_par_semaine_max) VALUES (?, ?)', [result.lastId, rand(3, 5)]);
+  const result = await run('INSERT INTO joueur (pseudo, password_hash, role) VALUES (?, ?, ?)', [pseudo, hash, 'membre']);
+  await run('INSERT OR IGNORE INTO frequence (joueur_id, raids_par_semaine_max) VALUES (?, ?)', [result.lastId, rand(3, 5)]);
   return result.lastId;
 }
 
-function createMain(joueurId, nom) {
+async function createMain(joueurId, nom) {
   const classe = pick(CLASSES);
   const role = pick(ROLES_BY_CLASS[classe]);
-  const result = run(
+  const result = await run(
     'INSERT INTO personnage (joueur_id, nom, classe, role, type) VALUES (?, ?, ?, ?, ?)',
     [joueurId, nom, classe, role, 'Main']
   );
   const charId = result.lastId;
 
   for (const inst of ACCESS_INSTANCES) {
-    run('INSERT OR IGNORE INTO acces_instance (personnage_id, instance, debloque) VALUES (?, ?, ?)', [charId, inst, 1]);
+    await run('INSERT OR IGNORE INTO acces_instance (personnage_id, instance, debloque) VALUES (?, ?, ?)', [charId, inst, 1]);
   }
   for (const inst of RAID40) {
-    run('INSERT OR IGNORE INTO validation_stuff (personnage_id, instance, statut) VALUES (?, ?, ?)', [charId, inst, 'valide']);
+    await run('INSERT OR IGNORE INTO validation_stuff (personnage_id, instance, statut) VALUES (?, ?, ?)', [charId, inst, 'valide']);
   }
   return charId;
 }
 
-function ensureSignup(charId, instance, jour, statut = 'present') {
-  run(
+async function ensureSignup(charId, instance, jour, statut = 'present') {
+  await run(
     `INSERT INTO preference_raid (personnage_id, instance, jour, statut)
      VALUES (?, ?, ?, ?)
      ON CONFLICT(personnage_id, instance, jour)
@@ -73,35 +72,35 @@ function ensureSignup(charId, instance, jour, statut = 'present') {
   );
 }
 
-function countMainsForNight(instance, jour) {
-  return queryOne(`
+async function countMainsForNight(instance, jour) {
+  const row = await queryOne(`
     SELECT COUNT(*) as c
     FROM preference_raid pr
     JOIN personnage p ON p.id = pr.personnage_id
     WHERE pr.instance = ? AND pr.jour = ? AND p.type = 'Main' AND pr.statut != 'absent'
-  `, [instance, jour]).c;
+  `, [instance, jour]);
+  return row.c;
 }
 
-function fillRaidNight(instance, jour, target) {
-  const mains = queryAll("SELECT id FROM personnage WHERE type = 'Main'");
+async function fillRaidNight(instance, jour, target) {
+  const mains = await queryAll("SELECT id FROM personnage WHERE type = 'Main'");
   const shuffled = shuffle(mains);
 
   for (const { id } of shuffled) {
-    if (countMainsForNight(instance, jour) >= target) break;
-    ensureSignup(id, instance, jour, 'present');
+    if ((await countMainsForNight(instance, jour)) >= target) break;
+    await ensureSignup(id, instance, jour, 'present');
   }
 
-  // Quelques absents / tentatives sur le même soir pour du réalisme
-  const signed = queryAll(`
+  const signed = await queryAll(`
     SELECT pr.personnage_id as id
     FROM preference_raid pr
     JOIN personnage p ON p.id = pr.personnage_id
     WHERE pr.instance = ? AND pr.jour = ? AND p.type = 'Main' AND pr.statut = 'present'
   `, [instance, jour]);
 
-  shuffle(signed).slice(0, rand(1, 3)).forEach(({ id }) => {
-    ensureSignup(id, instance, jour, pick(['absent', 'tentative']));
-  });
+  for (const { id } of shuffle(signed).slice(0, rand(1, 3))) {
+    await ensureSignup(id, instance, jour, pick(['absent', 'tentative']));
+  }
 
   return countMainsForNight(instance, jour);
 }
@@ -109,10 +108,10 @@ function fillRaidNight(instance, jour, target) {
 async function main() {
   await getDb();
 
-  const usedPseudos = new Set(queryAll('SELECT pseudo FROM joueur').map(r => r.pseudo));
-  const usedNames = new Set(queryAll('SELECT nom FROM personnage').map(r => r.nom));
+  const usedPseudos = new Set((await queryAll('SELECT pseudo FROM joueur')).map(r => r.pseudo));
+  const usedNames = new Set((await queryAll('SELECT nom FROM personnage')).map(r => r.nom));
 
-  const mainsCount = queryOne("SELECT COUNT(*) as c FROM personnage WHERE type = 'Main'").c;
+  const mainsCount = (await queryOne("SELECT COUNT(*) as c FROM personnage WHERE type = 'Main'")).c;
   const minMainsNeeded = 58;
 
   if (mainsCount < minMainsNeeded) {
@@ -121,32 +120,31 @@ async function main() {
     for (let i = 0; i < toCreate; i++) {
       const pseudo = uniqueName(usedPseudos, 'Raider');
       const nom = uniqueName(usedNames, 'Hero');
-      const joueurId = createAccount(pseudo, 'test1234');
-      createMain(joueurId, nom);
+      const joueurId = await createAccount(pseudo, 'test1234');
+      await createMain(joueurId, nom);
     }
   }
 
   console.log('Remplissage des soirs raid 40...');
   for (const night of RAID_NIGHTS) {
-    const count = fillRaidNight(night.instance, night.jour, night.target);
+    const count = await fillRaidNight(night.instance, night.jour, night.target);
     console.log(`  ${night.instance} ${night.jour}: ${count} mains présents/tentatives`);
   }
 
-  // Quelques prefs sur d'autres raids/jours pour les membres existants
-  const allMains = queryAll("SELECT id FROM personnage WHERE type = 'Main'");
+  const allMains = await queryAll("SELECT id FROM personnage WHERE type = 'Main'");
   const otherInstances = ['BWL', 'MC', 'ONY'];
   const otherDays = ['Mercredi', 'Jeudi', 'Vendredi'];
   for (const { id } of shuffle(allMains).slice(0, Math.floor(allMains.length * 0.4))) {
-    ensureSignup(id, pick(otherInstances), pick(otherDays), pick(['present', 'present', 'tentative']));
+    await ensureSignup(id, pick(otherInstances), pick(otherDays), pick(['present', 'present', 'tentative']));
   }
 
   console.log('\n✅ Enrichissement terminé !');
-  console.log(`   ${queryOne('SELECT COUNT(*) as c FROM joueur').c} joueurs`);
-  console.log(`   ${queryOne("SELECT COUNT(*) as c FROM personnage WHERE type = 'Main'").c} mains`);
-  console.log(`   ${queryOne('SELECT COUNT(*) as c FROM preference_raid').c} préférences`);
+  console.log(`   ${(await queryOne('SELECT COUNT(*) as c FROM joueur')).c} joueurs`);
+  console.log(`   ${(await queryOne("SELECT COUNT(*) as c FROM personnage WHERE type = 'Main'")).c} mains`);
+  console.log(`   ${(await queryOne('SELECT COUNT(*) as c FROM preference_raid')).c} préférences`);
 
   for (const night of RAID_NIGHTS) {
-    console.log(`   → ${night.instance} ${night.jour}: ${countMainsForNight(night.instance, night.jour)} mains`);
+    console.log(`   → ${night.instance} ${night.jour}: ${await countMainsForNight(night.instance, night.jour)} mains`);
   }
 
   process.exit(0);

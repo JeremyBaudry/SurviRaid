@@ -1,38 +1,34 @@
-const initSqlJs = require('sql.js');
-const fs = require('fs');
 const path = require('path');
+const { createClient } = require('@libsql/client');
 
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'surviraid.db');
+let client = null;
 
-let db = null;
+function getClientConfig() {
+  if (process.env.TURSO_DATABASE_URL) {
+    return {
+      url: process.env.TURSO_DATABASE_URL,
+      authToken: process.env.TURSO_AUTH_TOKEN,
+    };
+  }
 
-function ensureDbDir() {
-  const dir = path.dirname(DB_PATH);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-}
-
-function save() {
-  ensureDbDir();
-  const data = db.export();
-  fs.writeFileSync(DB_PATH, Buffer.from(data));
+  const dbPath = process.env.DB_PATH || path.join(__dirname, 'surviraid.db');
+  const normalized = dbPath.replace(/\\/g, '/');
+  return { url: `file:${normalized}` };
 }
 
 async function getDb() {
-  if (db) return db;
+  if (client) return client;
 
-  const SQL = await initSqlJs();
-  ensureDbDir();
+  client = createClient(getClientConfig());
+  console.log(
+    process.env.TURSO_DATABASE_URL
+      ? 'DB: Turso (persistant)'
+      : `DB: fichier local (${process.env.DB_PATH || 'surviraid.db'})`
+  );
 
-  if (fs.existsSync(DB_PATH)) {
-    const buf = fs.readFileSync(DB_PATH);
-    db = new SQL.Database(buf);
-  } else {
-    db = new SQL.Database();
-  }
+  await client.execute('PRAGMA foreign_keys = ON');
 
-  db.run('PRAGMA foreign_keys = ON');
-
-  db.run(`
+  await client.execute(`
     CREATE TABLE IF NOT EXISTS joueur (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       pseudo TEXT UNIQUE NOT NULL,
@@ -42,7 +38,7 @@ async function getDb() {
     )
   `);
 
-  db.run(`
+  await client.execute(`
     CREATE TABLE IF NOT EXISTS personnage (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       joueur_id INTEGER NOT NULL,
@@ -56,7 +52,7 @@ async function getDb() {
     )
   `);
 
-  db.run(`
+  await client.execute(`
     CREATE TABLE IF NOT EXISTS acces_instance (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       personnage_id INTEGER NOT NULL,
@@ -67,7 +63,7 @@ async function getDb() {
     )
   `);
 
-  db.run(`
+  await client.execute(`
     CREATE TABLE IF NOT EXISTS validation_stuff (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       personnage_id INTEGER NOT NULL,
@@ -81,7 +77,7 @@ async function getDb() {
     )
   `);
 
-  db.run(`
+  await client.execute(`
     CREATE TABLE IF NOT EXISTS preference_raid (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       personnage_id INTEGER NOT NULL,
@@ -93,9 +89,7 @@ async function getDb() {
     )
   `);
 
-  try { db.run("ALTER TABLE preference_raid ADD COLUMN statut TEXT NOT NULL DEFAULT 'present'"); } catch (e) { /* already exists */ }
-
-  db.run(`
+  await client.execute(`
     CREATE TABLE IF NOT EXISTS frequence (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       joueur_id INTEGER UNIQUE NOT NULL,
@@ -104,47 +98,58 @@ async function getDb() {
     )
   `);
 
-  db.run(`
+  await client.execute(`
     CREATE TABLE IF NOT EXISTS jour_actif (
       jour TEXT PRIMARY KEY CHECK(jour IN ('Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche')),
       actif INTEGER NOT NULL DEFAULT 1
     )
   `);
 
-  try { db.run('ALTER TABLE personnage ADD COLUMN role2 TEXT DEFAULT NULL CHECK(role2 IS NULL OR role2 IN (\'Tank\', \'Heal\', \'DPS\'))'); } catch (e) { /* column already exists */ }
+  try {
+    await client.execute("ALTER TABLE preference_raid ADD COLUMN statut TEXT NOT NULL DEFAULT 'present'");
+  } catch (_) { /* already exists */ }
 
-  try { db.run("DELETE FROM preference_raid WHERE instance IN ('AQ20', 'ZG')"); } catch (e) { /* ignore */ }
+  try {
+    await client.execute("ALTER TABLE personnage ADD COLUMN role2 TEXT DEFAULT NULL");
+  } catch (_) { /* already exists */ }
+
+  try {
+    await client.execute("DELETE FROM preference_raid WHERE instance IN ('AQ20', 'ZG')");
+  } catch (_) { /* ignore */ }
 
   const jours = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
   for (const j of jours) {
-    db.run('INSERT OR IGNORE INTO jour_actif (jour, actif) VALUES (?, 1)', [j]);
+    await client.execute({
+      sql: 'INSERT OR IGNORE INTO jour_actif (jour, actif) VALUES (?, 1)',
+      args: [j],
+    });
   }
 
-  save();
-  return db;
+  return client;
 }
 
-function queryAll(sql, params = []) {
-  const stmt = db.prepare(sql);
-  if (params.length) stmt.bind(params);
-  const rows = [];
-  while (stmt.step()) rows.push(stmt.getAsObject());
-  stmt.free();
-  return rows;
+async function queryAll(sql, params = []) {
+  const result = await client.execute({ sql, args: params });
+  return result.rows.map((row) => {
+    const obj = {};
+    for (const col of result.columns) {
+      let val = row[col];
+      if (typeof val === 'bigint') val = Number(val);
+      obj[col] = val;
+    }
+    return obj;
+  });
 }
 
-function queryOne(sql, params = []) {
-  const rows = queryAll(sql, params);
+async function queryOne(sql, params = []) {
+  const rows = await queryAll(sql, params);
   return rows[0] || null;
 }
 
-function run(sql, params = []) {
-  db.run(sql, params);
-  const changes = db.getRowsModified();
-  const lastIdResult = db.exec("SELECT last_insert_rowid()");
-  const lastId = lastIdResult.length > 0 ? lastIdResult[0].values[0][0] : null;
-  save();
-  return { lastId, changes };
+async function run(sql, params = []) {
+  const result = await client.execute({ sql, args: params });
+  const lastId = result.lastInsertRowid != null ? Number(result.lastInsertRowid) : null;
+  return { lastId, changes: result.rowsAffected || 0 };
 }
 
-module.exports = { getDb, queryAll, queryOne, run, save };
+module.exports = { getDb, queryAll, queryOne, run };

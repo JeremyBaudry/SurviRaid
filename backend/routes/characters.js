@@ -13,12 +13,12 @@ router.get('/classes', (req, res) => {
   res.json({ classes: CLASSES, roles: ROLES });
 });
 
-router.get('/', authMiddleware, (req, res) => {
+router.get('/', authMiddleware, async (req, res) => {
   try {
-    const chars = queryAll('SELECT * FROM personnage WHERE joueur_id = ?', [req.user.id]);
+    const chars = await queryAll('SELECT * FROM personnage WHERE joueur_id = ?', [req.user.id]);
     for (const c of chars) {
-      c.acces = queryAll('SELECT instance, debloque FROM acces_instance WHERE personnage_id = ?', [c.id]);
-      c.validations = queryAll('SELECT instance, statut FROM validation_stuff WHERE personnage_id = ?', [c.id]);
+      c.acces = await queryAll('SELECT instance, debloque FROM acces_instance WHERE personnage_id = ?', [c.id]);
+      c.validations = await queryAll('SELECT instance, statut FROM validation_stuff WHERE personnage_id = ?', [c.id]);
     }
     res.json(chars);
   } catch (err) {
@@ -26,7 +26,7 @@ router.get('/', authMiddleware, (req, res) => {
   }
 });
 
-router.post('/', authMiddleware, (req, res) => {
+router.post('/', authMiddleware, async (req, res) => {
   try {
     const { nom, classe, role, role2, type, acces } = req.body;
     if (!nom || !classe || !role) {
@@ -38,22 +38,30 @@ router.post('/', authMiddleware, (req, res) => {
 
     const charType = type || 'Main';
     if (charType === 'Main') {
-      const existingMain = queryOne("SELECT id FROM personnage WHERE joueur_id = ? AND type = 'Main'", [req.user.id]);
+      const existingMain = await queryOne("SELECT id FROM personnage WHERE joueur_id = ? AND type = 'Main'", [req.user.id]);
       if (existingMain) return res.status(400).json({ error: 'Tu as déjà un Main. Change-le en Reroll d\'abord.' });
     }
 
-    const result = run('INSERT INTO personnage (joueur_id, nom, classe, role, role2, type) VALUES (?, ?, ?, ?, ?, ?)',
-      [req.user.id, nom, classe, role, role2 || null, charType]);
+    const result = await run(
+      'INSERT INTO personnage (joueur_id, nom, classe, role, role2, type) VALUES (?, ?, ?, ?, ?, ?)',
+      [req.user.id, nom, classe, role, role2 || null, charType]
+    );
 
     const charId = result.lastId;
 
     for (const inst of ACCESS_INSTANCES) {
       const unlocked = acces?.[inst] ? 1 : 0;
-      run('INSERT OR IGNORE INTO acces_instance (personnage_id, instance, debloque) VALUES (?, ?, ?)', [charId, inst, unlocked]);
+      await run(
+        'INSERT OR IGNORE INTO acces_instance (personnage_id, instance, debloque) VALUES (?, ?, ?)',
+        [charId, inst, unlocked]
+      );
     }
 
     for (const inst of VALID_INSTANCES) {
-      run('INSERT OR IGNORE INTO validation_stuff (personnage_id, instance, statut) VALUES (?, ?, ?)', [charId, inst, 'en_attente']);
+      await run(
+        'INSERT OR IGNORE INTO validation_stuff (personnage_id, instance, statut) VALUES (?, ?, ?)',
+        [charId, inst, 'en_attente']
+      );
     }
 
     res.json({ id: charId });
@@ -62,25 +70,32 @@ router.post('/', authMiddleware, (req, res) => {
   }
 });
 
-router.put('/:id', authMiddleware, (req, res) => {
+router.put('/:id', authMiddleware, async (req, res) => {
   try {
-    const char = queryOne('SELECT * FROM personnage WHERE id = ? AND joueur_id = ?', [req.params.id, req.user.id]);
+    const char = await queryOne('SELECT * FROM personnage WHERE id = ? AND joueur_id = ?', [req.params.id, req.user.id]);
     if (!char) return res.status(404).json({ error: 'Personnage non trouvé' });
 
     const { nom, classe, role, role2, type, acces } = req.body;
 
     if (type === 'Main' && char.type !== 'Main') {
-      const existingMain = queryOne("SELECT id FROM personnage WHERE joueur_id = ? AND type = 'Main' AND id != ?", [req.user.id, req.params.id]);
+      const existingMain = await queryOne(
+        "SELECT id FROM personnage WHERE joueur_id = ? AND type = 'Main' AND id != ?",
+        [req.user.id, req.params.id]
+      );
       if (existingMain) return res.status(400).json({ error: 'Tu as déjà un Main.' });
     }
 
-    run('UPDATE personnage SET nom=?, classe=?, role=?, role2=?, type=? WHERE id=?',
-      [nom, classe, role, role2 || null, type, req.params.id]);
+    await run(
+      'UPDATE personnage SET nom=?, classe=?, role=?, role2=?, type=? WHERE id=?',
+      [nom, classe, role, role2 || null, type, req.params.id]
+    );
 
     if (acces) {
       for (const inst of ACCESS_INSTANCES) {
-        run('UPDATE acces_instance SET debloque = ? WHERE personnage_id = ? AND instance = ?',
-          [acces[inst] ? 1 : 0, req.params.id, inst]);
+        await run(
+          'UPDATE acces_instance SET debloque = ? WHERE personnage_id = ? AND instance = ?',
+          [acces[inst] ? 1 : 0, req.params.id, inst]
+        );
       }
     }
 
@@ -90,9 +105,9 @@ router.put('/:id', authMiddleware, (req, res) => {
   }
 });
 
-router.delete('/:id', authMiddleware, (req, res) => {
+router.delete('/:id', authMiddleware, async (req, res) => {
   try {
-    const result = run('DELETE FROM personnage WHERE id = ? AND joueur_id = ?', [req.params.id, req.user.id]);
+    const result = await run('DELETE FROM personnage WHERE id = ? AND joueur_id = ?', [req.params.id, req.user.id]);
     if (result.changes === 0) return res.status(404).json({ error: 'Personnage non trouvé' });
     res.json({ ok: true });
   } catch (err) {
